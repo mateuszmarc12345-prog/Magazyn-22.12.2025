@@ -60,11 +60,9 @@ tab1, tab2, tab3, tab4 = st.tabs(["📊 Stan Magazynu", "➕ Nowy Produkt", "�
 
 # --- POBIERANIE DANYCH ---
 try:
-    # Pobieramy produkty z relacją kategorii
     response = supabase.table("produkty").select("id, nazwa, liczba, cena, kategoria_id, kategorie(nazwa)").order("nazwa").execute()
     wszystkie_produkty = response.data
     
-    # Pobieramy kategorie do mapowania
     kat_res = supabase.table("kategorie").select("id, nazwa").execute()
     wszystkie_kategorie = kat_res.data
     kat_map = {k['nazwa']: k['id'] for k in wszystkie_kategorie}
@@ -72,7 +70,7 @@ except Exception as e:
     st.error(f"Błąd danych: {e}")
     wszystkie_produkty, wszystkie_kategorie, kat_map = [], [], {}
 
-# --- TAB 1: STAN MAGAZYNU (Z EDYCJĄ I MASOWĄ ZMIANĄ) ---
+# --- TAB 1: STAN MAGAZYNU ---
 with tab1:
     st.header("Zarządzanie zapasami")
     
@@ -80,7 +78,6 @@ with tab1:
     szukaj = c1.text_input("🔍 Szukaj produktu...", "")
     filtr_kat = c2.selectbox("Filtr kategorii", ["Wszystkie"] + [k['nazwa'] for k in wszystkie_kategorie])
 
-    # Filtrowanie
     produkty_wyswietlane = wszystkie_produkty
     if szukaj:
         produkty_wyswietlane = [p for p in produkty_wyswietlane if szukaj.lower() in p['nazwa'].lower()]
@@ -89,8 +86,8 @@ with tab1:
 
     if produkty_wyswietlane:
         st.markdown("---")
-        h1, h2, h3, h4, h5 = st.columns([3, 1.5, 1.5, 3, 0.5])
-        h1.caption("**NAZWA / EDYCJA**")
+        h1, h2, h3, h4, h5 = st.columns([3, 1.5, 1.5, 3.5, 0.5])
+        h1.caption("**STATUS / NAZWA**")
         h2.caption("**KATEGORIA**")
         h3.caption("**CENA**")
         h4.caption("**ZARZĄDZANIE ILOŚCIĄ**")
@@ -98,14 +95,18 @@ with tab1:
 
         for p in produkty_wyswietlane:
             with st.container():
-                col1, col2, col3, col4, col5 = st.columns([3, 1.5, 1.5, 3, 0.5])
+                col1, col2, col3, col4, col5 = st.columns([3, 1.5, 1.5, 3.5, 0.5])
                 
                 ilosc_akt = p.get('liczba') or 0
                 cena_akt = float(p.get('cena') or 0)
                 
-                # Edycja nazwy i ceny
-                col1.write(f"**{p['nazwa']}**")
-                with col1.expander("✏️ Edytuj"):
+                # Przywrócenie znaczników statusu
+                status_ikonka = "🔴" if ilosc_akt <= 5 else "🟢"
+                label_status = " (ZAMÓW!)" if ilosc_akt <= 5 else ""
+                
+                # Kolumna 1: Status i Edycja
+                col1.write(f"{status_ikonka} **{p['nazwa']}**{label_status}")
+                with col1.expander("✏️ Edytuj nazwę/cenę"):
                     with st.form(f"edit_{p['id']}"):
                         n_n = st.text_input("Nazwa", value=p['nazwa'])
                         n_c = st.number_input("Cena", value=cena_akt)
@@ -115,11 +116,11 @@ with tab1:
                 col2.write(p.get('kategorie', {}).get('nazwa', 'Brak'))
                 col3.write(f"{cena_akt:.2f} zł")
                 
-                # Zmiana ilości (Masowa)
-                c_stan, c_plus_minus, c_input = col4.columns([1, 1, 2])
+                # Kolumna 4: Zarządzanie ilością (Plus/Minus oraz Pole wpisywania)
+                c_stan, c_quick, c_input = col4.columns([1, 0.8, 2.2])
                 c_stan.write(f"Stan: **{ilosc_akt}**")
                 
-                with c_plus_minus:
+                with c_quick:
                     if st.button("➕", key=f"p_{p['id']}"): aktualizuj_stan(p['id'], ilosc_akt, 1)
                     if st.button("➖", key=f"m_{p['id']}"): aktualizuj_stan(p['id'], ilosc_akt, -1)
                 
@@ -132,8 +133,10 @@ with tab1:
                 if col5.button("🗑️", key=f"del_{p['id']}"):
                     usun_produkt(p['id'], p['nazwa'])
                 st.divider()
+    else:
+        st.info("Brak produktów.")
 
-# --- TAB 2 & 3: NOWY PRODUKT / KATEGORIE (Bez zmian) ---
+# --- TAB 2: NOWY PRODUKT ---
 with tab2:
     st.header("Dodaj nowy towar")
     if not kat_map: st.warning("Dodaj kategorię!")
@@ -148,6 +151,7 @@ with tab2:
                     supabase.table("produkty").insert({"nazwa": n_nazwa, "cena": n_cena, "liczba": n_ilosc, "kategoria_id": kat_map[n_kat]}).execute()
                     st.rerun()
 
+# --- TAB 3: KATEGORIE ---
 with tab3:
     st.header("Kategorie")
     with st.form("new_k"):
@@ -156,57 +160,32 @@ with tab3:
             if n_k: supabase.table("kategorie").insert({"nazwa": n_k}).execute(); st.rerun()
     for k in wszystkie_kategorie: st.text(f"• {k['nazwa']}")
 
-# --- TAB 4: PRZYWRÓCONE I ROZBUDOWANE STATYSTYKI ---
+# --- TAB 4: STATYSTYKI ---
 with tab4:
-    st.header("📈 Pełna analityka magazynowa")
-    
+    st.header("📈 Statystyki i Raporty")
     if wszystkie_produkty:
-        # Tworzymy DataFrame dla łatwiejszych obliczeń
         df = pd.DataFrame([{
             'Nazwa': p['nazwa'],
             'Kategoria': p.get('kategorie', {}).get('nazwa', 'Brak'),
             'Ilość': p.get('liczba') or 0,
-            'Cena': float(p.get('cena') or 0),
             'Wartość': (p.get('liczba') or 0) * float(p.get('cena') or 0)
         } for p in wszystkie_produkty])
 
-        # 1. Wskaźniki ogólne (Kluczowe liczby)
         m1, m2, m3 = st.columns(3)
-        m1.metric("Suma pozycji", len(df))
-        m2.metric("Łączna wartość", f"{df['Wartość'].sum():,.2f} PLN")
-        m3.metric("Liczba sztuk (łącznie)", int(df['Ilość'].sum()))
+        m1.metric("Pozycje", len(df))
+        m2.metric("Wartość magazynu", f"{df['Wartość'].sum():,.2f} PLN")
+        m3.metric("Łączna liczba sztuk", int(df['Ilość'].sum()))
 
         st.markdown("---")
+        c_l, c_r = st.columns(2)
+        c_l.subheader("Ilość wg kategorii")
+        c_l.bar_chart(df.groupby('Kategoria')['Ilość'].sum())
+        c_r.subheader("Wartość wg kategorii")
+        c_r.area_chart(df.groupby('Kategoria')['Wartość'].sum())
 
-        # 2. Wykresy
-        col_chart1, col_chart2 = st.columns(2)
-        
-        with col_chart1:
-            st.subheader("📦 Ilość towarów wg kategorii")
-            kat_ilosc = df.groupby('Kategoria')['Ilość'].sum()
-            st.bar_chart(kat_ilosc)
-
-        with col_chart2:
-            st.subheader("💰 Wartość (PLN) wg kategorii")
-            kat_wartosc = df.groupby('Kategoria')['Wartość'].sum()
-            st.area_chart(kat_wartosc)
-
-        st.markdown("---")
-
-        # 3. Raport braków i niskich stanów
-        st.subheader("⚠️ Niskie stany (poniżej 5 sztuk)")
-        niskie_stany = df[df['Ilość'] <= 5].sort_values(by='Ilość')
-        
-        if not niskie_stany.empty:
-            # Kolorowanie tabeli dla czytelności
-            st.table(niskie_stany[['Nazwa', 'Kategoria', 'Ilość']])
+        st.subheader("⚠️ Produkty do zamówienia (poniżej 5 szt.)")
+        braki = df[df['Ilość'] <= 5].sort_values('Ilość')
+        if not braki.empty:
+            st.dataframe(braki[['Nazwa', 'Ilość', 'Kategoria']], use_container_width=True)
         else:
-            st.success("Wszystkie produkty mają stan powyżej 5 sztuk.")
-
-        # 4. Top 5 najdroższych produktów na stanie
-        st.subheader("💎 5 najcenniejszych zasobów (łączna wartość)")
-        top_val = df.nlargest(5, 'Wartość')[['Nazwa', 'Wartość', 'Ilość']]
-        st.dataframe(top_val, use_container_width=True)
-
-    else:
-        st.info("Brak danych do wygenerowania statystyk.")
+            st.success("Stany są w normie.")
